@@ -3,6 +3,7 @@ import numpy as np
 from pyzbar.pyzbar import decode
 from datetime import datetime
 import os
+import time
 
 # ========== 1. Pastikan file data mahasiswa tersedia ==========
 if not os.path.exists('data_mahasiswa.txt'):
@@ -23,10 +24,12 @@ if not cap.isOpened():
     print("Error: Kamera tidak terbuka.")
     exit()
 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 720)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-presensi_tercatat = set()  # Untuk mencegah dobel absensi
+presensi_tercatat = set()            # Mencegah duplikat presensi
+scan_times = {}                      # Menyimpan waktu pemindaian terakhir
+DELAY_WAKTU = 3                      # Detik menahan warna hijau sebelum kuning
 
 # ========== 4. Loop Presensi ==========
 while True:
@@ -38,31 +41,38 @@ while True:
     for barcode in decode(img): 
         data = barcode.data.decode('utf-8').strip()  # isi QR = NIM
 
-        # Debug: tampilkan hasil deteksi
         if data in daftar_mahasiswa:
-            print(f"QR Dikenali: {data} (Valid)")
+            nama = daftar_mahasiswa[data]
+            waktu_sekarang = time.time()
+
+            # ========== Pertama kali hadir ==========
+            if data not in presensi_tercatat:
+                print(f"QR Dikenali: {data} (Valid)")
+                waktu = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"{nama} ({data}) hadir pada {waktu}")
+
+                presensi_tercatat.add(data)
+                scan_times[data] = waktu_sekarang
+
+                with open('log_presensi.csv', 'a') as f:
+                    f.write(f"{data},{nama},{waktu}\n")
+
+                color = (0, 255, 0)  # Hijau
+                output = f"Hadir: {nama}"
+
+            # ========== Sudah hadir, dalam delay ==========
+            elif waktu_sekarang - scan_times.get(data, 0) < DELAY_WAKTU:
+                color = (0, 255, 0)  # Tetap hijau
+                output = f"Hadir: {nama}"
+
+            # ========== Sudah hadir, lewat delay ==========
+            else:
+                color = (0, 255, 255)  # Kuning
+                output = f"Sudah hadir: {nama}"
+
         else:
             print(f"QR Dikenali: {data} (Tidak valid, tidak ada di daftar_mahasiswa)")
-
-
-        if data in daftar_mahasiswa and data not in presensi_tercatat:
-            nama = daftar_mahasiswa[data]
-            waktu = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"{nama} ({data}) hadir pada {waktu}")
-            presensi_tercatat.add(data)
-
-            # Catat ke file CSV
-            with open('log_presensi.csv', 'a') as f:
-                f.write(f"{data},{nama},{waktu}\n")
-
-            color = (0, 255, 0)
-            output = f"Hadir: {nama}"
-
-        elif data in presensi_tercatat:
-            color = (0, 255, 255)
-            output = f"Sudah hadir: {nama}"
-        else:
-            color = (0, 0, 255)
+            color = (0, 0, 255)  # Merah
             output = f"Tidak dikenali: {data}"
 
         # Gambar bounding box dan teks
@@ -71,8 +81,7 @@ while True:
         cv2.polylines(img, [pts], True, color, 5)
 
         x, y, w, h = barcode.rect
-        cv2.putText(img, output, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9, color, 2)
+        cv2.putText(img, output, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
     # ========== 5. Tampilkan hasil kamera ==========
     cv2.imshow('Presensi Kelas', img)
